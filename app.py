@@ -3,6 +3,7 @@ Run:   pip install streamlit streamlit-aggrid pandas openpyxl
        streamlit run app.py
 Keep app.py, xlsx_io.py and template.xlsx in the same folder.
 """
+import io
 import json
 from pathlib import Path
 
@@ -119,7 +120,7 @@ custom_css = {
 }
 
 # ---------------------------------------------------------------- buttons
-b1, b2, b3, _ = st.columns([1, 1, 1, 5])
+b1, b2, b3, b4, _ = st.columns([1, 1, 1, 1, 4])
 if b1.button("➕ Add product"):
     st.session_state.df = pd.concat([df, X.new_product_rows(df)], ignore_index=True)
     st.session_state.ver += 1
@@ -154,3 +155,9 @@ if b3.button("💾 Save to Excel", type="primary"):
         st.success(f"Saved to {TEMPLATE.name}. Backup of the previous version: {backup.name}")
     except PermissionError:
         st.error("Could not write the file. Close template.xlsx in Excel and try again.")
+
+# ---------------------------------------------------------------- download (current edits, even if not saved)
+buf = io.BytesIO()
+X.save_to_template(TEMPLATE, st.session_state.df, layout["merge_cols"], out=buf)
+b4.download_button("⬇️ Download Excel", data=buf.getvalue(), file_name="tracking_edited.xlsx",
+                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

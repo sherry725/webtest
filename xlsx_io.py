@@ -70,13 +70,17 @@ def new_product_rows(df):
     return pd.DataFrame([goal, actual], columns=df.columns, dtype=object)
 
 
-def save_to_template(path, df, merge_cols):
-    """Write df into the template file. Returns the backup path."""
+def save_to_template(path, df, merge_cols, out=None):
+    """Write df into the template. With out=None the template file itself is overwritten
+    (after a backup, which is returned). With out=<file-like>, the template is left alone and
+    the edited workbook is written to out (used for downloads)."""
     path = Path(path)
-    backup_dir = path.parent / "backups"
-    backup_dir.mkdir(exist_ok=True)
-    backup = backup_dir / f"{path.stem}_{dt.datetime.now():%Y%m%d_%H%M%S}{path.suffix}"
-    shutil.copy2(path, backup)
+    backup = None
+    if out is None:
+        backup_dir = path.parent / "backups"
+        backup_dir.mkdir(exist_ok=True)
+        backup = backup_dir / f"{path.stem}_{dt.datetime.now():%Y%m%d_%H%M%S}{path.suffix}"
+        shutil.copy2(path, backup)
 
     wb = load_workbook(path)
     ws = wb.active
@@ -135,5 +139,5 @@ def save_to_template(path, df, merge_cols):
             f = copy(cell.font)
             cell.font = Font(name=f.name, sz=f.sz, b=f.b, i=f.i, color=font)
 
-    wb.save(path)
+    wb.save(out if out is not None else path)
     return backup
