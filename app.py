@@ -14,6 +14,8 @@ import xlsx_io as X
 
 TEMPLATE = Path(__file__).parent / "template.xlsx"
 FROZEN = ["A", "B", "C", "D"]           # columns pinned on the left (like Excel freeze panes)
+DROPDOWNS = {"A": ["car", "bus"],         # column letter -> allowed choices
+             "B": ["door", "window"]}
 LOCKED = {"D", "K"}                      # columns users cannot edit (K = YTD is calculated)
 
 st.set_page_config(page_title="Tracking sheet", layout="wide")
@@ -56,6 +58,8 @@ def col_def(c):
     f = c["field"]
     d = {"field": f, "headerName": c["header"] or "", "editable": f not in LOCKED,
          "width": int((c["width"] or 11) * 9 + 20), "minWidth": 70}
+    if f in DROPDOWNS:
+        d.update(cellEditor="agSelectCellEditor", cellEditorParams={"values": DROPDOWNS[f]})
     if f in FROZEN:
         d["pinned"] = "left"
     if f in layout["merge_cols"]:
