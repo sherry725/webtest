@@ -51,6 +51,14 @@ num_parser = JsCode("""
 function(p){ const v=p.newValue; if (v===''||v===null||v===undefined) return null;
   const n=Number(v); return isNaN(n) ? p.oldValue : n; }""")
 
+# Fallback for single-click editing: start the editor directly on click (works even if singleClickEdit is ignored)
+click_to_edit = JsCode("""
+function(e){
+  if (!e.colDef || e.colDef.editable === false) return;
+  const busy = e.api.getEditingCells().some(c => c.rowIndex === e.rowIndex && c.column === e.column);
+  if (!busy) e.api.startEditingCell({rowIndex: e.rowIndex, colKey: e.column.getColId()});
+}""")
+
 repaint = JsCode("function(e){ e.api.refreshCells({force:true}); }")
 
 # ---------------------------------------------------------------- columns
@@ -89,11 +97,14 @@ gridOptions = {
     "columnDefs": columnDefs,
     "suppressRowTransform": True,       # required for rowSpan
     "suppressMovableColumns": True,
+    "singleClickEdit": True,            # one click starts editing (default is double click)
     "rowHeight": 38,
     "headerHeight": 38,
     "groupHeaderHeight": 38,
     "onCellValueChanged": repaint,
-    "defaultColDef": {"resizable": True, "sortable": False},
+    "onCellClicked": click_to_edit,
+    "defaultColDef": {"resizable": True, "sortable": False,
+                      "singleClickEdit": True},      # one click starts editing, on every column
 }
 
 # Full grid lines on every cell and header (like Excel with gridlines on)
