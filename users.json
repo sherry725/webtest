@@ -1,0 +1,18 @@
+{
+  "user1": {
+    "salt": "07a21d4a8efeb58fdb0829b6501cce16",
+    "hash": "54880db71f623e2f2ccac25353820f9e234aa833efaf2c317cba821ba6a43929"
+  },
+  "user2": {
+    "salt": "6397f05fe913790d42a9fc324ceff8ea",
+    "hash": "aaace341777c30a859745c58d42b19ba44b859579b5de7367523c0b011c6762c"
+  },
+  "user3": {
+    "salt": "78bc5bf935ce4575278437398b5e1b47",
+    "hash": "4daf76752d084929f8e241f0a576f00cb356e39ead9943b50ea9b45d3865ff09"
+  },
+  "user4": {
+    "salt": "de3e893bb48b88db3710703fe9cd07f4",
+    "hash": "7ba10b5b393362ae9ff99fd1e765e60bc2b82edf72da3beb75e6c6ee0a39bdef"
+  }
+}

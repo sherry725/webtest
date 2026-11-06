@@ -1,5 +1,5 @@
-"""Read the Excel template into a DataFrame and save edits back into the same file,
-keeping all of the template's existing formatting, merges and widths."""
+"""Read an Excel file into a DataFrame and save edits back, keeping all existing
+formatting, merges and widths."""
 import datetime as dt
 import shutil
 from copy import copy
@@ -11,17 +11,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter as L, column_index_from_string as CI
 
-# ------------------------------------------------------------------ CONFIG (edit to match your sheet)
-HEADER_ROWS = 2          # rows 1-2 are headers
-FIRST_DATA = 3           # data starts at row 3
-BLOCK = 2                # one product = 2 rows (Goal + Actual)
-METRIC_COL = "D"         # column holding "Goal" / "Actual"
-MONTH_COLS = ["E", "F", "G", "H", "I", "J"]    # Jan..Jun, used for YTD and Actual-vs-Goal colors
-YTD_COL = "K"            # filled automatically on save (sum of MONTH_COLS)
-NUMERIC_COLS = ["E", "F", "G", "H", "I", "J", "K", "L"]
-GREEN = ("C6EFCE", "006100")   # (fill, font) when Actual >= Goal
-RED = ("FFC7CE", "9C0006")     # when Actual < Goal
-# ------------------------------------------------------------------
+from config import BLOCK, FIRST_DATA, GREEN, HEADER_ROWS, RED
 
 
 def _num(v):
@@ -33,8 +23,10 @@ def _num(v):
         return None
 
 
-def read_template(path):
-    """Return (df, layout). df columns are Excel letters (A, B, ...)."""
+def read_template(path, cfg):
+    """Return (df, layout). df columns are Excel letters (A, B, ...).
+    layout: header columns, row spans (from the file's own merges) and block_cols
+    (columns merged once per product, which are merged again for newly added products)."""
     ws = load_workbook(path).active
     max_col = ws.max_column
     letters = [L(c) for c in range(1, max_col + 1)]
@@ -51,29 +43,38 @@ def read_template(path):
         for m in merges:
             if m.min_row == 1 and m.min_col <= c <= m.max_col:
                 if m.max_row >= HEADER_ROWS:
-                    header = h1                       # header merged across both rows
+                    header = h1
                 elif m.max_col > m.min_col:
-                    group, header = (m.coord, h1), h2  # group header over several columns
-        columns.append({"field": L(c), "header": header, "group": group,
-                        "width": ws.column_dimensions[L(c)].width if L(c) in ws.column_dimensions else None})
-    merge_cols = sorted({L(m.min_col) for m in merges
-                         if m.min_row == FIRST_DATA and m.max_row > m.min_row and m.min_col == m.max_col},
-                        key=CI)
-    return df, {"columns": columns, "merge_cols": merge_cols}
+                    group, header = (m.coord, h1), h2
+        width = ws.column_dimensions[L(c)].width if L(c) in ws.column_dimensions else None
+        columns.append({"field": L(c), "header": header, "group": group, "width": width})
+
+    spans, block_cols = {}, []
+    for m in merges:
+        height = m.max_row - m.min_row + 1
+        if m.min_row >= FIRST_DATA and height > 1 and m.min_col == m.max_col:
+            col = L(m.min_col)
+            spans.setdefault(col, {})[m.min_row - FIRST_DATA] = height
+            if m.min_row == FIRST_DATA and height == BLOCK:
+                block_cols.append(col)
+    return df, {"columns": columns, "spans": spans, "block_cols": sorted(block_cols, key=CI)}
 
 
-def new_product_rows(df):
-    """Blank Goal/Actual rows to append for a new product."""
-    blank = {c: None for c in df.columns}
-    goal, actual = dict(blank), dict(blank)
-    goal[METRIC_COL], actual[METRIC_COL] = "Goal", "Actual"
-    return pd.DataFrame([goal, actual], columns=df.columns, dtype=object)
+def add_product(df, layout, cfg):
+    """Append a blank Goal/Actual pair; returns the new df and registers its merged cells."""
+    start = len(df)
+    goal, actual = {c: None for c in df.columns}, {c: None for c in df.columns}
+    goal[cfg["metric"]], actual[cfg["metric"]] = "Goal", "Actual"
+    for col in layout["block_cols"]:
+        layout["spans"].setdefault(col, {})[start] = BLOCK
+    new = pd.DataFrame([goal, actual], columns=df.columns, dtype=object)
+    return pd.concat([df, new], ignore_index=True)
 
 
-def save_to_template(path, df, merge_cols, out=None):
-    """Write df into the template. With out=None the template file itself is overwritten
-    (after a backup, which is returned). With out=<file-like>, the template is left alone and
-    the edited workbook is written to out (used for downloads)."""
+def save_to_template(path, df, layout, cfg, out=None):
+    """Write df into the Excel file. With out=None the file itself is overwritten (after a
+    backup, which is returned). With out=<file-like> the file is left alone and the edited
+    workbook is written to out (used for downloads)."""
     path = Path(path)
     backup = None
     if out is None:
@@ -82,53 +83,50 @@ def save_to_template(path, df, merge_cols, out=None):
         backup = backup_dir / f"{path.stem}_{dt.datetime.now():%Y%m%d_%H%M%S}{path.suffix}"
         shutil.copy2(path, backup)
 
+    metric, months, ytd, numeric = cfg["metric"], cfg["months"], cfg["ytd"], cfg["numeric"]
     wb = load_workbook(path)
     ws = wb.active
     max_col = ws.max_column
 
-    # 1) extend the sheet if the user added products: copy template styles + merges
+    # 1) products added in the app: copy template styles + merges for them
     have = (ws.max_row - HEADER_ROWS) // BLOCK
     want = len(df) // BLOCK
     for b in range(have, want):
         r0 = FIRST_DATA + b * BLOCK
         for off in range(BLOCK):
             for c in range(1, max_col + 1):
-                src, dst = ws.cell(FIRST_DATA + off, c), ws.cell(r0 + off, c)
-                if not isinstance(src, MergedCell):
-                    dst._style = copy(src._style)
-                else:   # style of merged-away cell: use top-left of its block
-                    dst._style = copy(ws.cell(FIRST_DATA, c)._style)
-        for col in merge_cols:
+                src = ws.cell(FIRST_DATA + off, c)
+                if isinstance(src, MergedCell):
+                    src = ws.cell(FIRST_DATA, c)
+                ws.cell(r0 + off, c)._style = copy(src._style)
+        for col in layout["block_cols"]:
             ws.merge_cells(start_row=r0, start_column=CI(col), end_row=r0 + BLOCK - 1, end_column=CI(col))
 
-    # 2) values
+    # 2) values (only the top-left cell of a merge holds a value)
     for i in range(len(df)):
         r = FIRST_DATA + i
         for c in range(1, max_col + 1):
             cell = ws.cell(r, c)
             if isinstance(cell, MergedCell):
-                continue                      # only the top-left cell of a merge holds the value
+                continue
             col = L(c)
             v = df.iloc[i][col]
-            if col in NUMERIC_COLS:
+            if col == ytd:
+                vals = [x for x in (_num(df.iloc[i][m]) for m in months) if x is not None]
+                v = round(sum(vals), 6) if vals else None
+            if col in numeric:
                 v = _num(v)
                 if v is not None and v == int(v):
                     v = int(v)
             elif v is None or (isinstance(v, float) and pd.isna(v)) or v == "":
                 v = None
-            if col == YTD_COL:
-                vals = [_num(df.iloc[i][m]) for m in MONTH_COLS]
-                vals = [x for x in vals if x is not None]
-                v = round(sum(vals), 6) if vals else None
-                if v is not None and v == int(v):
-                    v = int(v)
             cell.value = v
 
-    # 3) Actual-vs-Goal colors (replaces any stale manual fills)
+    # 3) Actual-vs-Goal colors (replaces stale manual fills)
     for i in range(1, len(df)):
-        if df.iloc[i][METRIC_COL] != "Actual":
+        if df.iloc[i][metric] != "Actual":
             continue
-        for col in MONTH_COLS:
+        for col in months:
             cell = ws[f"{col}{FIRST_DATA + i}"]
             a, g = _num(df.iloc[i][col]), _num(df.iloc[i - 1][col])
             if a is None or g is None:
