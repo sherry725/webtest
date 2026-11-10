@@ -83,7 +83,7 @@ def save_to_template(path, df, layout, cfg, out=None):
         backup = backup_dir / f"{path.stem}_{dt.datetime.now():%Y%m%d_%H%M%S}{path.suffix}"
         shutil.copy2(path, backup)
 
-    metric, months, ytd, numeric = cfg["metric"], cfg["months"], cfg["ytd"], cfg["numeric"]
+    metric, months, calc, numeric = cfg["metric"], cfg["months"], cfg["calc"], cfg["numeric"]
     wb = load_workbook(path)
     ws = wb.active
     max_col = ws.max_column
@@ -111,8 +111,8 @@ def save_to_template(path, df, layout, cfg, out=None):
                 continue
             col = L(c)
             v = df.iloc[i][col]
-            if col == ytd:
-                vals = [x for x in (_num(df.iloc[i][m]) for m in months) if x is not None]
+            if col in calc:                  # YTD / FY: sum of their months
+                vals = [x for x in (_num(df.iloc[i][m]) for m in calc[col]) if x is not None]
                 v = round(sum(vals), 6) if vals else None
             if col in numeric:
                 v = _num(v)
@@ -121,18 +121,20 @@ def save_to_template(path, df, layout, cfg, out=None):
             elif v is None or (isinstance(v, float) and pd.isna(v)) or v == "":
                 v = None
             cell.value = v
+            if col in numeric:
+                cell.number_format = "#,##0"     # whole numbers with thousands separator
 
     # 3) Actual-vs-Goal colors (replaces stale manual fills)
-    def val(row, col):                      # YTD is the sum of the months
-        if col == ytd:
-            vals = [v for v in (_num(row[m]) for m in months) if v is not None]
+    def val(row, col):                      # YTD / FY are the sum of their months
+        if col in calc:
+            vals = [v for v in (_num(row[m]) for m in calc[col]) if v is not None]
             return sum(vals) if vals else None
         return _num(row[col])
 
     for i in range(1, len(df)):
         if df.iloc[i][metric] != "Actual":
             continue
-        for col in months + [ytd]:
+        for col in months + list(calc):
             cell = ws[f"{col}{FIRST_DATA + i}"]
             a, g = val(df.iloc[i], col), val(df.iloc[i - 1], col)
             if a is None or g is None:

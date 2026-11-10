@@ -21,10 +21,11 @@ SHEETS = {
         "suffix": "work",                       # file = <username>_work.xlsx
         "metric": "D",                          # column holding Goal / Actual
         "months": list("EFGHIJ"),               # Jan..Jun: used for YTD and colors
-        "ytd": "K",                             # calculated automatically
+        "calc": {"K": list("EFG"),              # calculated columns: column -> months it sums
+                 "L": list("EFGHIJ")},          # K = YTD (Jan-Mar), L = FY (Jan-Jun)
         "numeric": list("EFGHIJKL"),
         "frozen": list("ABCD"),                 # pinned on the left like Excel freeze panes
-        "locked": {"D", "K"},                   # users cannot edit these columns
+        "locked": {"D", "K", "L"},                   # users cannot edit these columns
         "locked_rows": ["Goal"],                # rows whose Metrics value is listed here are read-only ([] = none)
         "dropdowns": {"A": ["car", "bus"], "B": ["door", "window"]},
         # column widths in pixels: a column ("E"), a range ("A-D") or "*" for all others.
@@ -37,10 +38,11 @@ SHEETS = {
         "suffix": "life",                       # file = <username>_life.xlsx
         "metric": "C",
         "months": list("DEFGHI"),
-        "ytd": "J",
+        "calc": {"J": list("DEF"),              # J = YTD (Jan-Mar)
+                 "K": list("DEFGHI")},          # K = FY (Jan-Jun)
         "numeric": list("DEFGHIJK"),
         "frozen": list("ABC"),
-        "locked": {"C", "J"},
+        "locked": {"C", "J", "K"},
         "locked_rows": ["Goal"],
         "dropdowns": {},                        # e.g. {"B": ["food", "house"]}
         "col_widths": {"A-C": 50, "D-E": 70},

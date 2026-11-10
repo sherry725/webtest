@@ -33,16 +33,17 @@ def render(kind):
     # `fb` = style returned when no color applies (none for months, grey/bold for YTD).
     rule_tpl = """
     function(p){
-      const MONTHS = %(months)s, YTD = '%(ytd)s';
+      const CALC = %(calc)s;                                       // calculated column -> months it sums
       if (p.data && p.node.rowIndex < %(n)d && %(rows)s.includes(p.data.%(m)s))
         return {backgroundColor:'rgba(128,128,128,.12)'};           // locked row: grey, no color rule
       if (!p.data || p.data.%(m)s !== 'Actual') return %(fb)s;
       const goal = p.api.getDisplayedRowAtIndex(p.node.rowIndex - 1);
       if (!goal) return %(fb)s;
-      const val = (node) => {                                      // YTD is calculated, so sum the months
-        if (p.colDef.field === YTD) {
+      const val = (node) => {                                      // YTD / FY are calculated: sum their months
+        const src = CALC[p.colDef.field];
+        if (src) {
           let s=0, any=false;
-          for (const m of MONTHS){ const v=node.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
+          for (const m of src){ const v=node.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
           return any ? s : null;
         }
         const v = node.data[p.colDef.field];
@@ -54,19 +55,21 @@ def render(kind):
                     : {backgroundColor:'#ffc7ce', color:'#9c0006', fontWeight:'600'};
     }"""
     rule_args = {"m": cfg["metric"], "n": st.session_state[f"{k}_lock_n"], "rows": json.dumps(cfg["locked_rows"]),
-                 "months": json.dumps(cfg["months"]), "ytd": cfg["ytd"]}
+                 "calc": json.dumps(cfg["calc"])}
     color_rule = JsCode(rule_tpl % {**rule_args, "fb": "null"})
-    ytd_rule = JsCode(rule_tpl % {**rule_args, "fb": "{fontWeight:'600', backgroundColor:'rgba(128,128,128,.12)'}"})
-    ytd_getter = JsCode("""
-    function(p){ let s=0, any=false;
-      for (const m of %s){ const v=p.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
-      return any ? s : null; }""" % json.dumps(cfg["months"]))
+    calc_rule = JsCode(rule_tpl % {**rule_args, "fb": "{fontWeight:'600', backgroundColor:'rgba(128,128,128,.12)'}"})
+    def calc_getter(sources):               # YTD / FY: sum of the listed month columns, live while editing
+        return JsCode("""
+        function(p){ let s=0, any=false;
+          for (const m of %s){ const v=p.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
+          return any ? s : null; }""" % json.dumps(sources))
+
     num_parser = JsCode("""
     function(p){ const v=p.newValue; if (v===''||v===null||v===undefined) return null;
-      const n=Number(v); return isNaN(n) ? p.oldValue : n; }""")
+      const n=Number(String(v).replace(/,/g,'')); return isNaN(n) ? p.oldValue : n; }""")
     int_fmt = JsCode("""
     function(p){ const v=p.value; if (v===null || v===undefined || v==='' || isNaN(Number(v))) return v;
-      return Math.round(Number(v)); }""")
+      return Math.round(Number(v)).toLocaleString('en-US'); }""")
     click_to_edit = JsCode("""
     function(e){
       if (!e.colDef || e.colDef.editable === false) return;
@@ -102,8 +105,8 @@ def render(kind):
                 d.update(editable=row_editable, cellStyle=locked_look)
         if f in cfg["months"]:
             d["cellStyle"] = color_rule
-        if f == cfg["ytd"]:
-            d.update(valueGetter=ytd_getter, cellStyle=ytd_rule)
+        if f in cfg["calc"]:
+            d.update(valueGetter=calc_getter(cfg["calc"][f]), cellStyle=calc_rule)
         elif f in cfg["locked"]:
             d["cellStyle"] = {"backgroundColor": "rgba(128,128,128,.08)"}
         return d
