@@ -29,18 +29,34 @@ def render(kind):
     # ------------------------------------------------------------ JS helpers
     row_span = JsCode("function(p){ const s=%s[p.colDef.field]||{}; return s[p.node.rowIndex]||1; }"
                       % json.dumps(layout["spans"]))
-    color_rule = JsCode("""
+    # Actual-vs-Goal rule, used by the month columns and the YTD column.
+    # `fb` = style returned when no color applies (none for months, grey/bold for YTD).
+    rule_tpl = """
     function(p){
+      const MONTHS = %(months)s, YTD = '%(ytd)s';
       if (p.data && p.node.rowIndex < %(n)d && %(rows)s.includes(p.data.%(m)s))
         return {backgroundColor:'rgba(128,128,128,.12)'};           // locked row: grey, no color rule
-      if (!p.data || p.data.%(m)s !== 'Actual') return null;
+      if (!p.data || p.data.%(m)s !== 'Actual') return %(fb)s;
       const goal = p.api.getDisplayedRowAtIndex(p.node.rowIndex - 1);
-      if (!goal) return null;
-      const a = Number(p.value), g = Number(goal.data[p.colDef.field]);
-      if (p.value === null || p.value === '' || goal.data[p.colDef.field] === null || isNaN(a) || isNaN(g)) return null;
+      if (!goal) return %(fb)s;
+      const val = (node) => {                                      // YTD is calculated, so sum the months
+        if (p.colDef.field === YTD) {
+          let s=0, any=false;
+          for (const m of MONTHS){ const v=node.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
+          return any ? s : null;
+        }
+        const v = node.data[p.colDef.field];
+        return (v===null || v===undefined || v==='' || isNaN(Number(v))) ? null : Number(v);
+      };
+      const a = val(p.node), g = val(goal);
+      if (a === null || g === null) return %(fb)s;
       return a >= g ? {backgroundColor:'#c6efce', color:'#006100', fontWeight:'600'}
                     : {backgroundColor:'#ffc7ce', color:'#9c0006', fontWeight:'600'};
-    }""" % {"m": cfg["metric"], "n": st.session_state[f"{k}_lock_n"], "rows": json.dumps(cfg["locked_rows"])})
+    }"""
+    rule_args = {"m": cfg["metric"], "n": st.session_state[f"{k}_lock_n"], "rows": json.dumps(cfg["locked_rows"]),
+                 "months": json.dumps(cfg["months"]), "ytd": cfg["ytd"]}
+    color_rule = JsCode(rule_tpl % {**rule_args, "fb": "null"})
+    ytd_rule = JsCode(rule_tpl % {**rule_args, "fb": "{fontWeight:'600', backgroundColor:'rgba(128,128,128,.12)'}"})
     ytd_getter = JsCode("""
     function(p){ let s=0, any=false;
       for (const m of %s){ const v=p.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
@@ -87,8 +103,7 @@ def render(kind):
         if f in cfg["months"]:
             d["cellStyle"] = color_rule
         if f == cfg["ytd"]:
-            d.update(valueGetter=ytd_getter,
-                     cellStyle={"fontWeight": "600", "backgroundColor": "rgba(128,128,128,.12)"})
+            d.update(valueGetter=ytd_getter, cellStyle=ytd_rule)
         elif f in cfg["locked"]:
             d["cellStyle"] = {"backgroundColor": "rgba(128,128,128,.08)"}
         return d

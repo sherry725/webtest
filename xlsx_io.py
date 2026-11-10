@@ -123,12 +123,18 @@ def save_to_template(path, df, layout, cfg, out=None):
             cell.value = v
 
     # 3) Actual-vs-Goal colors (replaces stale manual fills)
+    def val(row, col):                      # YTD is the sum of the months
+        if col == ytd:
+            vals = [v for v in (_num(row[m]) for m in months) if v is not None]
+            return sum(vals) if vals else None
+        return _num(row[col])
+
     for i in range(1, len(df)):
         if df.iloc[i][metric] != "Actual":
             continue
-        for col in months:
+        for col in months + [ytd]:
             cell = ws[f"{col}{FIRST_DATA + i}"]
-            a, g = _num(df.iloc[i][col]), _num(df.iloc[i - 1][col])
+            a, g = val(df.iloc[i], col), val(df.iloc[i - 1], col)
             if a is None or g is None:
                 cell.fill = PatternFill(fill_type=None)
                 continue
