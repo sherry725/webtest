@@ -7,7 +7,7 @@ import streamlit as st
 from st_aggrid import AgGrid, JsCode
 
 import xlsx_io as X
-from config import DATA_DIR, SHEETS
+from config import DATA_DIR, SHEETS, expand_widths
 
 
 def render(kind):
@@ -22,6 +22,7 @@ def render(kind):
     k = f"{user}_{kind}"                                  # session keys are per user and per page
     if f"{k}_df" not in st.session_state:
         st.session_state[f"{k}_df"], st.session_state[f"{k}_layout"] = X.read_template(path, cfg)
+        st.session_state[f"{k}_lock_n"] = len(st.session_state[f"{k}_df"])   # rows from the file are locked; new products stay editable
     st.session_state.setdefault(f"{k}_ver", 0)            # grid key counter; never reset
     df, layout = st.session_state[f"{k}_df"], st.session_state[f"{k}_layout"]
 
@@ -30,6 +31,8 @@ def render(kind):
                       % json.dumps(layout["spans"]))
     color_rule = JsCode("""
     function(p){
+      if (p.data && p.node.rowIndex < %(n)d && %(rows)s.includes(p.data.%(m)s))
+        return {backgroundColor:'rgba(128,128,128,.12)'};           // locked row: grey, no color rule
       if (!p.data || p.data.%(m)s !== 'Actual') return null;
       const goal = p.api.getDisplayedRowAtIndex(p.node.rowIndex - 1);
       if (!goal) return null;
@@ -37,7 +40,7 @@ def render(kind):
       if (p.value === null || p.value === '' || goal.data[p.colDef.field] === null || isNaN(a) || isNaN(g)) return null;
       return a >= g ? {backgroundColor:'#c6efce', color:'#006100', fontWeight:'600'}
                     : {backgroundColor:'#ffc7ce', color:'#9c0006', fontWeight:'600'};
-    }""" % {"m": cfg["metric"]})
+    }""" % {"m": cfg["metric"], "n": st.session_state[f"{k}_lock_n"], "rows": json.dumps(cfg["locked_rows"])})
     ytd_getter = JsCode("""
     function(p){ let s=0, any=false;
       for (const m of %s){ const v=p.data[m]; if (v!==null && v!=='' && !isNaN(Number(v))){ s+=Number(v); any=true; } }
@@ -45,19 +48,32 @@ def render(kind):
     num_parser = JsCode("""
     function(p){ const v=p.newValue; if (v===''||v===null||v===undefined) return null;
       const n=Number(v); return isNaN(n) ? p.oldValue : n; }""")
+    int_fmt = JsCode("""
+    function(p){ const v=p.value; if (v===null || v===undefined || v==='' || isNaN(Number(v))) return v;
+      return Math.round(Number(v)); }""")
     click_to_edit = JsCode("""
     function(e){
       if (!e.colDef || e.colDef.editable === false) return;
       const busy = e.api.getEditingCells().some(c => c.rowIndex === e.rowIndex && c.column === e.column);
       if (!busy) e.api.startEditingCell({rowIndex: e.rowIndex, colKey: e.column.getColId()});
     }""")
+    # Row lock: Goal rows (loaded from the file) are read-only, Actual rows stay editable
+    lock_args = (st.session_state[f"{k}_lock_n"], json.dumps(cfg["locked_rows"]), cfg["metric"])
+    row_editable = JsCode("function(p){ return !(p.node.rowIndex < %d && %s.includes(p.data.%s)); }" % lock_args)
+    locked_look = JsCode("function(p){ return (p.node.rowIndex < %d && %s.includes(p.data.%s)) "
+                         "? {backgroundColor:'rgba(128,128,128,.12)'} : null; }" % lock_args)
     repaint = JsCode("function(e){ e.api.refreshCells({force:true}); }")
 
     # ------------------------------------------------------------ columns
+    widths = expand_widths(cfg.get("col_widths", {}))
+
     def col_def(c):
         f = c["field"]
+        w = widths.get(f, widths.get("*"))                 # from config.py, else from the Excel file
+        if w is None:
+            w = int((c["width"] or 11) * 9 + 20)
         d = {"field": f, "headerName": c["header"] or "", "editable": f not in cfg["locked"],
-             "width": int((c["width"] or 11) * 9 + 20), "minWidth": 70}
+             "width": w, "minWidth": min(w, 40)}
         if f in cfg["dropdowns"]:
             d.update(cellEditor="agSelectCellEditor", cellEditorParams={"values": cfg["dropdowns"][f]})
         if f in cfg["frozen"]:
@@ -65,7 +81,9 @@ def render(kind):
         if f in layout["spans"]:
             d.update(rowSpan=row_span, cellClass="cell-span")
         if f in cfg["numeric"]:
-            d.update(type="numericColumn", valueParser=num_parser)
+            d.update(type="numericColumn", valueParser=num_parser, valueFormatter=int_fmt)
+            if cfg["locked_rows"] and f not in cfg["locked"]:
+                d.update(editable=row_editable, cellStyle=locked_look)
         if f in cfg["months"]:
             d["cellStyle"] = color_rule
         if f == cfg["ytd"]:
@@ -114,6 +132,7 @@ def render(kind):
         st.rerun()
     if b2.button("↺ Reload from file", key=f"{k}_reload"):
         st.session_state[f"{k}_df"], st.session_state[f"{k}_layout"] = X.read_template(path, cfg)
+        st.session_state[f"{k}_lock_n"] = len(st.session_state[f"{k}_df"])
         st.session_state[f"{k}_ver"] += 1       # new grid key = browser grid rebuilt from the file
         st.rerun()
 
